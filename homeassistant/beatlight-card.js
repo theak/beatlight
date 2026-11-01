@@ -24,6 +24,9 @@
 // The animation is pure CSS (opacity and transform only), so it runs on the GPU.
 
 const RESUME_MIN = 15;
+// On resume, Music Assistant's output (e.g. shairport-sync) reports playing a couple of
+// seconds before Music Assistant does. Stay on the last player this long meanwhile.
+const HANDOFF_MS = 5000;
 const GREYS = [[60, 62, 66], [48, 50, 54], [34, 35, 38]];
 const TONES = [0.3, 0.26, 0.19]; // gradient lightness, dark enough for white text
 
@@ -131,7 +134,9 @@ class BeatlightCard extends HTMLElement {
     this._entity = (target || this._players[0]).entity;
     const st = hass.states[this._entity], a = st?.attributes || {};
     const name = this._config.name || a.friendly_name || this._entity;
-    const playing = st?.state === "playing";
+    // Any of the card's players: during a handoff the shown one may not report it yet.
+    const playing = this._playing =
+      this._players.some((p) => hass.states[p.entity]?.state === "playing");
     const shown = st?.state === "idle" && target ? "paused" : st?.state || "unavailable";
     const state = shown[0].toUpperCase() + shown.slice(1);
     // The song as the headline and "Artist · Living Room" under it; without track info,
@@ -148,6 +153,7 @@ class BeatlightCard extends HTMLElement {
 
   // The player to show and control: the first one playing; else the one last seen
   // playing, if paused or only recently idle; else the most recently paused or stopped.
+  // A player that has only just started doesn't take over from that one straight away.
   _target(hass) {
     const recent = (p) => {
       const st = hass.states[p.entity];
@@ -155,7 +161,12 @@ class BeatlightCard extends HTMLElement {
         (st.state === "idle" && Date.now() - new Date(st.last_changed) < RESUME_MIN * 60000));
     };
     const playing = this._players.find((p) => hass.states[p.entity]?.state === "playing");
-    if (playing) return (this._active = playing);
+    if (playing) {
+      const started = Date.now() - new Date(hass.states[playing.entity].last_changed);
+      if (playing !== this._active && this._active && recent(this._active) &&
+          started < HANDOFF_MS) return this._active;
+      return (this._active = playing);
+    }
     if (this._active && recent(this._active)) return this._active;
     const changed = (p) => new Date(hass.states[p.entity].last_changed);
     return this._players.filter(recent).sort((x, y) => changed(y) - changed(x))[0];
@@ -211,7 +222,10 @@ class BeatlightCard extends HTMLElement {
         .title, .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .title { font-size: 15px; font-weight: 500; color: #fff; }
         .sub { font-size: 13px; color: rgba(255,255,255,0.76); }
-        /* Big targets for a wall tablet: 64px tall, the full width between neighbours. */
+        /* Big targets for a wall tablet: 64px tall, the full width between neighbours. The
+           hand cursor covers the gaps too, and the icons never take the pointer. */
+        .controls { flex: none; display: flex; gap: 8px; cursor: pointer; }
+        button ha-icon { pointer-events: none; }
         button { flex: none; width: 52px; height: 64px; border: none; border-radius: 14px;
           background: none; color: #fff; cursor: pointer; display: flex; align-items: center;
           justify-content: center; padding: 0; --mdc-icon-size: 26px; }
@@ -234,9 +248,11 @@ class BeatlightCard extends HTMLElement {
             <div class="art"><ha-icon icon="mdi:music-note"></ha-icon></div>
             <div class="text"><div class="title"></div><div class="sub"></div></div>
           </div>
-          <button data-action="media_previous_track"><ha-icon icon="mdi:skip-previous"></ha-icon></button>
-          <button class="play" data-action="media_play_pause"><ha-icon icon="mdi:play"></ha-icon></button>
-          <button data-action="media_next_track"><ha-icon icon="mdi:skip-next"></ha-icon></button>
+          <div class="controls">
+            <button data-action="media_previous_track"><ha-icon icon="mdi:skip-previous"></ha-icon></button>
+            <button class="play" data-action="media_play_pause"><ha-icon icon="mdi:play"></ha-icon></button>
+            <button data-action="media_next_track"><ha-icon icon="mdi:skip-next"></ha-icon></button>
+          </div>
         </div>
       </ha-card>`;
     const $ = (s) => this.shadowRoot.querySelector(s);
@@ -251,7 +267,7 @@ class BeatlightCard extends HTMLElement {
         // play/pause rather than a toggle, so an idle player (stopped on pause) resumes
         let action = b.dataset.action;
         if (action === "media_play_pause")
-          action = this._hass.states[this._entity]?.state === "playing" ? "media_pause" : "media_play";
+          action = this._playing ? "media_pause" : "media_play";
         this._hass.callService("media_player", action, { entity_id: this._entity });
       }));
     $(".info").addEventListener("click", () =>

@@ -177,7 +177,7 @@ class BeatlightCard extends HTMLElement {
   _build() {
     this.attachShadow({ mode: "open" }).innerHTML = `
       <style>
-        ha-card { position: relative; height: 68px; border-radius: 18px; overflow: hidden;
+        ha-card { position: relative; height: 76px; border-radius: 18px; overflow: hidden;
           isolation: isolate; background: #1d1e20; border: 1px solid rgba(255,255,255,0.07);
           box-sizing: border-box; }
         .layer { position: absolute; inset: 0; pointer-events: none; }
@@ -186,7 +186,7 @@ class BeatlightCard extends HTMLElement {
         .grad { right: auto; width: 180%; opacity: 0.42; transition: opacity 1s ease;
           animation: drift 12s ease-in-out infinite alternate paused; }
         .grad > div { position: absolute; inset: 0; transition: opacity 600ms ease; }
-        .bloom { transform-origin: 34px 50%; opacity: 0;
+        .bloom { transform-origin: 36px 50%; opacity: 0;
           animation: breathe 6s ease-in-out infinite paused; }
         .playing .grad { opacity: 0.7; }
         .playing .grad, .playing .bloom { animation-play-state: running; }
@@ -202,7 +202,7 @@ class BeatlightCard extends HTMLElement {
           padding: 0 8px 0 12px; box-sizing: border-box; }
         .info { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px;
           height: 100%; cursor: pointer; }
-        .art { flex: none; width: 44px; height: 44px; border-radius: 50%; overflow: hidden;
+        .art { flex: none; width: 48px; height: 48px; border-radius: 50%; overflow: hidden;
           box-shadow: 0 2px 8px rgba(0,0,0,0.35); background: rgba(255,255,255,0.1);
           display: flex; align-items: center; justify-content: center;
           --mdc-icon-size: 20px; color: rgba(255,255,255,0.7); }
@@ -211,8 +211,8 @@ class BeatlightCard extends HTMLElement {
         .title, .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .title { font-size: 15px; font-weight: 500; color: #fff; }
         .sub { font-size: 13px; color: rgba(255,255,255,0.76); }
-        /* Big targets for a wall tablet: 56px tall, the full width between neighbours. */
-        button { flex: none; width: 52px; height: 56px; border: none; border-radius: 14px;
+        /* Big targets for a wall tablet: 64px tall, the full width between neighbours. */
+        button { flex: none; width: 52px; height: 64px; border: none; border-radius: 14px;
           background: none; color: #fff; cursor: pointer; display: flex; align-items: center;
           justify-content: center; padding: 0; --mdc-icon-size: 26px; }
         button:hover { background: rgba(255,255,255,0.08); }
@@ -286,7 +286,7 @@ class BeatlightCard extends HTMLElement {
     cur.style.opacity = 0;
     this._gradI ^= 1;
     this._el.bloom.style.background =
-      `radial-gradient(ellipse 240px 120px at 34px 50%, ${rgba(glow, 0.55)}, ${rgba(glow, 0)} 70%)`;
+      `radial-gradient(ellipse 240px 120px at 36px 50%, ${rgba(glow, 0.55)}, ${rgba(glow, 0)} 70%)`;
   }
 }
 

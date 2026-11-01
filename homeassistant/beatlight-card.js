@@ -215,9 +215,15 @@ class BeatlightCard extends HTMLElement {
         button { flex: none; width: 52px; height: 64px; border: none; border-radius: 14px;
           background: none; color: #fff; cursor: pointer; display: flex; align-items: center;
           justify-content: center; padding: 0; --mdc-icon-size: 26px; }
-        button:hover { background: rgba(255,255,255,0.08); }
         button.play { width: 60px; background: rgba(0,0,0,0.28); }
-        button.play:hover { background: rgba(0,0,0,0.4); }
+        /* Touchscreens keep :hover on a tapped button until the next tap elsewhere, so
+           hover is for mice only; touch gets a highlight just while pressed. */
+        @media (hover: hover) {
+          button:hover { background: rgba(255,255,255,0.08); }
+          button.play:hover { background: rgba(0,0,0,0.4); }
+        }
+        button:active { background: rgba(255,255,255,0.12); }
+        button.play:active { background: rgba(0,0,0,0.45); }
       </style>
       <ha-card>
         <div class="layer grad"><div></div><div></div></div>

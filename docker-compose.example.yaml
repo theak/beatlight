@@ -1,0 +1,27 @@
+# Example: shairport-sync (AirPlay) playing through beatlight, plus the beatlight server.
+# Build the plugin into ./alsa first (see README.md).
+services:
+  shairport-sync:
+    image: mikebrady/shairport-sync
+    network_mode: host
+    restart: unless-stopped
+    devices:
+      - /dev/snd:/dev/snd
+    command: -o alsa -- -d beatlight
+    volumes:
+      - ./alsa/asound.conf:/etc/asound.conf:ro
+      - ./alsa:/opt/beatlight:ro
+      - ./run:/run/beatlight
+
+  beatlight:
+    build: ./server
+    restart: unless-stopped
+    environment:
+      BEATLIGHT_HOST: 192.168.1.50   # the ESP32 (give it a DHCP reservation)
+      # Optional: album colours from shairport-sync's MQTT cover art
+      # MQTT_URL: mqtt://user:password@192.168.1.10:1883
+      # MQTT_TOPIC: shairport
+    volumes:
+      - ./run:/run/beatlight
+      # the sound card's status, to time each level to when its audio leaves the DAC
+      - /proc/asound:/host-asound:ro

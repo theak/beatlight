@@ -1,0 +1,10 @@
+{
+  "domain": "beatlight",
+  "name": "Beatlight",
+  "codeowners": ["@theak"],
+  "dependencies": ["websocket_api"],
+  "documentation": "https://github.com/theak/beatlight",
+  "iot_class": "local_push",
+  "requirements": [],
+  "version": "0.1.0"
+}

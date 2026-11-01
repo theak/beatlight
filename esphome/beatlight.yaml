@@ -1,0 +1,437 @@
+# beatlight: an ESP32-S3 that makes a WS2812B strip dance to the music.
+#
+# The beatlight server taps the audio on its way to the sound card and sends the bass
+# level and album-art colours over UDP (see udp: below), so the lights follow the
+# music itself, not a microphone or the amplifier's volume. Turn the strip on with the
+# "Beatlight" effect (e.g. from a Home Assistant automation while music plays); the
+# numbers below tune the look live from HA.
+#
+# Wiring: GPIO14 (led_pin) -> 470 ohm -> strip DIN. The strip runs off its own 5 V
+# supply, whose GND must also connect to the ESP32's GND.
+
+substitutions:
+  name: beatlight
+  friendly_name: Beatlight
+  led_pin: GPIO14
+  num_leds: "36"
+  # Onboard RGB LED: GPIO48 on most ESP32-S3 DevKitC-style boards, GPIO38 on the
+  # official DevKitC-1 v1.1.
+  onboard_led_pin: GPIO48
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  encryption:
+    key: !secret beatlight_api_key
+
+ota:
+  - platform: esphome
+    password: !secret beatlight_ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # Keep the radio awake: modem sleep made the device miss packets and drop off HA
+  # while still associated to the AP.
+  power_save_mode: none
+
+  # Fallback hotspot (captive portal) in case the wifi connection fails
+  ap:
+    ssid: "Beatlight Fallback"
+    password: !secret beatlight_fallback_password
+
+captive_portal:
+
+globals:
+  # Latest bass level (0-255) from the server's audio tap, and when it arrived.
+  - id: net_level
+    type: uint8_t
+    initial_value: "0"
+  - id: net_level_ms
+    type: uint32_t
+    initial_value: "0"
+  # Album-art palette from the server: up to 8 RGB colours, darkest first. The
+  # version bumps whenever the colours change, and album_ms is when it last arrived.
+  - id: album_rgb
+    type: std::array<uint8_t, 24>
+  - id: album_n
+    type: uint8_t
+    initial_value: "0"
+  - id: album_version
+    type: uint32_t
+    initial_value: "0"
+  - id: album_ms
+    type: uint32_t
+    initial_value: "0"
+
+# The beatlight server sends:
+#   'S' 'V' 0x01 <level 0-255>          ~60/s while playing (low-passed, auto-gained)
+#   'S' 'V' 0x02 <n> n x (r g b)        album-art palette (n = 2-8, darkest first),
+#                                       on every track change and every 5 s
+udp:
+  - id: viz_udp
+    port: 7001
+    on_receive:
+      - lambda: |-
+          if (data.size() < 4 || data[0] != 'S' || data[1] != 'V')
+            return;
+          if (data[2] == 1 && data.size() == 4) {
+            id(net_level) = data[3];
+            id(net_level_ms) = millis();
+          } else if (data[2] == 2) {
+            uint8_t n = data[3];
+            if (n < 2 || n > 8 || data.size() != 4u + 3u * n)
+              return;
+            if (n != id(album_n) || !std::equal(data.begin() + 4, data.end(), id(album_rgb).begin())) {
+              std::copy(data.begin() + 4, data.end(), id(album_rgb).begin());
+              id(album_n) = n;
+              id(album_version)++;
+            }
+            id(album_ms) = millis();
+          }
+
+sensor:
+  - platform: uptime
+    name: "Uptime"
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+  - platform: debug
+    free:
+      name: "Heap Free"
+    block:
+      name: "Heap Max Block"
+    loop_time:
+      name: "Loop Time"
+
+debug:
+
+text_sensor:
+  - platform: debug
+    reset_reason:
+      name: "Reset Reason"
+  # The palette Beatlight is showing: the album colours as hex, or "sunset".
+  - platform: template
+    name: "Palette"
+    update_interval: 5s
+    lambda: |-
+      if (!id(album_colors).state || id(album_n) == 0 || millis() - id(album_ms) > 30000)
+        return {"sunset"};
+      std::string s;
+      for (int c = 0; c < id(album_n); c++) {
+        char hex[9];
+        snprintf(hex, sizeof(hex), "%s#%02x%02x%02x", c ? " " : "", id(album_rgb)[c * 3],
+                 id(album_rgb)[c * 3 + 1], id(album_rgb)[c * 3 + 2]);
+        s += hex;
+      }
+      return s;
+
+switch:
+  # Off forces the built-in sunset palette even while album colours are arriving.
+  - platform: template
+    id: album_colors
+    name: "Album Colors"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+  # Blanks Beatlight without turning the light off, so an automation that only
+  # drives the light can't undo it, and unmuting carries on with the same palette
+  # and beat.
+  - platform: template
+    id: mute
+    name: "Mute"
+    icon: mdi:lightbulb-off-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+
+# Tuning for the Beatlight effect.
+number:
+  # Dims the strip below the color_correct cap; 100% is the cap itself. Kept here
+  # rather than in the light's own brightness because HA turns the strip on without
+  # a brightness, and the light starts at 100% after every reboot.
+  - platform: template
+    id: led_brightness
+    name: "LED Brightness"
+    unit_of_measurement: "%"
+    min_value: 5
+    max_value: 100
+    step: 5
+    initial_value: 100
+    optimistic: true
+    restore_value: true
+  # How far the built-in sunset palette (used without album colours) is blended
+  # toward white: 0% is deep reds and yellows.
+  - platform: template
+    id: sunset_whiteness
+    name: "Sunset Whiteness"
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 5
+    initial_value: 45
+    optimistic: true
+    restore_value: true
+    entity_category: config
+  # Multiplies the incoming bass level: higher makes quieter hits slide the
+  # gradient further (loud hits saturate sooner).
+  - platform: template
+    id: sensitivity
+    name: "Sensitivity"
+    unit_of_measurement: "%"
+    min_value: 25
+    max_value: 300
+    step: 5
+    initial_value: 100
+    optimistic: true
+    restore_value: true
+    entity_category: config
+  # How fast the gradient slides back after a hit, in level steps per frame
+  # (~60 frames/s): low is a slow glide, high is a snappy flicker.
+  - platform: template
+    id: decay_speed
+    name: "Decay Speed"
+    min_value: 1
+    max_value: 40
+    step: 1
+    initial_value: 8
+    optimistic: true
+    restore_value: true
+    entity_category: config
+  # Palette positions between neighbouring LEDs: low shows a narrow slice of the
+  # gradient (one or two colours), high squeezes the whole gradient onto the strip.
+  - platform: template
+    id: gradient_spread
+    name: "Gradient Spread"
+    min_value: 1
+    max_value: 14
+    step: 1
+    initial_value: 7
+    optimistic: true
+    restore_value: true
+    entity_category: config
+  # How much each hit also brightens the strip: 0% is constant brightness; higher
+  # dims the strip between hits and flashes it on the beat.
+  - platform: template
+    id: beat_brightness
+    name: "Beat Brightness"
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 5
+    initial_value: 0
+    optimistic: true
+    restore_value: true
+    entity_category: config
+  # Length of the crossfade when the palette changes (new album, sunset fallback,
+  # or a Sunset Whiteness change).
+  - platform: template
+    id: palette_fade_s
+    name: "Palette Fade"
+    unit_of_measurement: s
+    min_value: 0
+    max_value: 10
+    step: 0.5
+    initial_value: 1.5
+    optimistic: true
+    restore_value: true
+    entity_category: config
+
+light:
+  - platform: esp32_rmt_led_strip
+    id: strip
+    name: "LED Strip"
+    pin: ${led_pin}
+    num_leds: ${num_leds}
+    chipset: WS2812
+    rgb_order: GRB
+    # Send each frame by DMA from internal RAM. With the default small RMT buffer the
+    # LEDs need many refills per frame from an interrupt that stalls during flash
+    # writes (settings saves), leaving a transmission hung and tripping the
+    # task/interrupt watchdogs. use_psram: false is needed on boards without PSRAM.
+    use_dma: true
+    use_psram: false
+    gamma_correct: 1.0
+    # Cap every channel at 59% (150/255) whatever HA asks for, to keep the strip's
+    # current (~1.3 A worst case for 36 LEDs) well within a small 5 V supply.
+    color_correct: [59%, 59%, 59%]
+    # Something else (e.g. an HA automation while music plays) decides when the strip
+    # is on, so never switch it on at boot.
+    restore_mode: ALWAYS_OFF
+    # HA's on/off toggle turns the strip on without an effect, which shows a flat
+    # solid colour, so fall back to the music effect. Choosing another effect still
+    # works.
+    on_turn_on:
+      - if:
+          condition:
+            lambda: return id(strip).get_effect_name() == "None";
+          then:
+            - light.turn_on:
+                id: strip
+                effect: Beatlight
+    effects:
+      # Each bass hit slides a cyclic gradient along the strip, which then glides
+      # back. While the server sends album-art colours, they replace the sunset
+      # palette.
+      - addressable_lambda:
+          name: Beatlight
+          update_interval: 16ms
+          lambda: |-
+            static uint8_t level = 0;
+            static const uint8_t sunset[][4] = {
+              {0, 150, 0, 0},     {50, 255, 40, 0},   {110, 255, 130, 4},
+              {128, 255, 210, 20}, {146, 255, 130, 4}, {205, 255, 40, 0},
+              {255, 150, 0, 0},
+            };
+            // 256-entry gradients: the one fading out, the one fading in, and when
+            // the fade started. key is the album_version shown, or 0 for sunset.
+            static uint8_t from[256][3], to[256][3];
+            static uint32_t fade_start = 0;
+            static uint32_t key = UINT32_MAX;
+
+            // Fill a gradient from {index, r, g, b} stops spanning 0-255.
+            auto fill = [](uint8_t (*g)[3], const uint8_t (*stops)[4]) {
+              int k = 0;
+              for (int idx = 0; idx < 256; idx++) {
+                while (idx > stops[k + 1][0])
+                  k++;
+                const uint8_t *a = stops[k], *b = stops[k + 1];
+                float t = float(idx - a[0]) / float(b[0] - a[0]);
+                for (int c = 0; c < 3; c++)
+                  g[idx][c] = a[c + 1] + (b[c + 1] - a[c + 1]) * t;
+              }
+            };
+            uint32_t now = millis();
+            float fade_ms = id(palette_fade_s).state * 1000.0f;
+            auto blended = [&](int idx, int c) {
+              float t = fade_ms <= 0 ? 1.0f : std::min(1.0f, (now - fade_start) / fade_ms);
+              return uint8_t(from[idx][c] + (to[idx][c] - from[idx][c]) * t);
+            };
+
+            // Album colours while they keep arriving (the server resends every 5 s).
+            bool album = id(album_colors).state && id(album_n) >= 2 && now - id(album_ms) < 30000;
+            // Sunset keys carry the whiteness (high bit set so they never match an
+            // album_version), so changing it in HA crossfades to the new shade.
+            int white_pct = (int) id(sunset_whiteness).state;
+            uint32_t want = album ? id(album_version) : 0x80000000u | white_pct;
+            if (want != key) {
+              // Start a crossfade from whatever is on screen now.
+              uint8_t snapshot[256][3];
+              for (int idx = 0; idx < 256; idx++)
+                for (int c = 0; c < 3; c++)
+                  snapshot[idx][c] = key == UINT32_MAX ? 0 : blended(idx, c);
+              memcpy(from, snapshot, sizeof(from));
+              if (album) {
+                // Mirror darkest -> brightest -> darkest so the gradient wraps
+                // seamlessly, with the brightest colour as the peak (like the
+                // sunset's yellow).
+                int n = id(album_n), m = 2 * n - 1;
+                uint8_t stops[15][4];
+                for (int s = 0; s < m; s++) {
+                  int c = s < n ? s : m - 1 - s;
+                  stops[s][0] = s * 255 / (m - 1);
+                  memcpy(&stops[s][1], &id(album_rgb)[c * 3], 3);
+                }
+                fill(to, stops);
+              } else {
+                // Blend each stop toward white. Blending is linear, so the dark
+                // seam stays darkest and the yellow peak brightest.
+                float w = white_pct / 100.0f;
+                uint8_t stops[7][4];
+                for (int s = 0; s < 7; s++) {
+                  stops[s][0] = sunset[s][0];
+                  for (int c = 1; c < 4; c++)
+                    stops[s][c] = sunset[s][c] + (255 - sunset[s][c]) * w;
+                }
+                fill(to, stops);
+              }
+              if (key == UINT32_MAX)
+                memcpy(from, to, sizeof(from));
+              fade_start = now;
+              key = want;
+            }
+
+            // No packets for a second means the music stopped.
+            int input = now - id(net_level_ms) < 1000 ? id(net_level) : 0;
+            input = std::min(255, (int) (input * id(sensitivity).state / 100.0f));
+            int decay = (int) id(decay_speed).state;
+            level = input > level ? input : std::max(0, level - decay);
+
+            // Beat Brightness dims the strip between hits and brings it back up to
+            // full on the beat; at 0% the brightness is constant.
+            float beat = id(beat_brightness).state / 100.0f;
+            float dim = id(led_brightness).state / 100.0f * (1.0f - beat + beat * level / 255.0f);
+            // Mute fades out (and back in) over ~0.5 s rather than snapping.
+            static float unmuted = 1.0f;
+            unmuted = id(mute).state ? std::max(0.0f, unmuted - 0.033f) : std::min(1.0f, unmuted + 0.033f);
+            dim *= unmuted;
+            int spread = (int) id(gradient_spread).state;
+            for (int i = 0; i < it.size(); i++) {
+              uint8_t idx = i * spread - level;
+              it[i] = Color(blended(idx, 0) * dim, blended(idx, 1) * dim, blended(idx, 2) * dim);
+            }
+      # Every LED cycles through the spectrum: checks all the LEDs and the colour order.
+      - addressable_rainbow:
+          name: Rainbow
+      # Fills the strip one LED at a time: a break in the data line shows up as the
+      # wipe stopping at a particular LED.
+      - addressable_color_wipe:
+          name: Color Wipe
+          colors:
+            - red: 100%
+              green: 0%
+              blue: 0%
+              num_leds: ${num_leds}
+            - red: 0%
+              green: 100%
+              blue: 0%
+              num_leds: ${num_leds}
+            - red: 0%
+              green: 0%
+              blue: 100%
+              num_leds: ${num_leds}
+          add_led_interval: 50ms
+      # Random flicker exercises fast, constantly changing data, where a marginal
+      # 3.3 V data signal shows up as stray wrong-coloured pixels.
+      - addressable_twinkle:
+          name: Twinkle
+      - addressable_random_twinkle:
+          name: Random Twinkle
+
+  # Onboard RGB LED: mirrors the strip's first LED, which flashes from the darkest
+  # palette colour to the bright peak on each bass hit. Copying the strip means it
+  # also follows Mute, LED Brightness and the strip turning off.
+  - platform: esp32_rmt_led_strip
+    id: onboard
+    name: "Onboard LED"
+    pin: ${onboard_led_pin}
+    num_leds: 1
+    chipset: WS2812
+    rgb_order: GRB
+    # One LED fits in a single RMT buffer, so no mid-frame refills.
+    rmt_symbols: 48
+    gamma_correct: 1.0
+    restore_mode: RESTORE_DEFAULT_ON
+    # Turned on from HA without an effect, go back to following the strip.
+    on_turn_on:
+      - if:
+          condition:
+            lambda: return id(onboard).get_effect_name() == "None";
+          then:
+            - light.turn_on:
+                id: onboard
+                effect: Follow Strip
+    effects:
+      - addressable_lambda:
+          name: Follow Strip
+          update_interval: 16ms
+          lambda: |-
+            auto *strip_out = static_cast<light::AddressableLight *>(id(strip).get_output());
+            it[0] = (*strip_out)[0].get();

@@ -144,7 +144,7 @@ entities:              # or just `entity: media_player.x`
 With several players for one room (e.g. Music Assistant playing through shairport-sync),
 the card shows the one that's playing and keeps controlling it after a pause. That
 matters for Music Assistant's Spotify Connect, which reports idle once paused, so play
-still resumes it. The card hides itself 15 minutes after everything stops.
+still resumes it. The card hides itself 3 minutes after everything pauses or stops.
 
 **Album colours without cover art:** copy `homeassistant/custom_components/beatlight`
 into `config/custom_components/`, add `beatlight:` to `configuration.yaml` and restart.

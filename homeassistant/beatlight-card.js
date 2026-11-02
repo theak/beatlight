@@ -23,7 +23,7 @@
 // the cover art for the LEDs (via the beatlight relay integration), else neutral greys.
 // The animation is pure CSS (opacity and transform only), so it runs on the GPU.
 
-const RESUME_MIN = 15;
+const RESUME_MIN = 3;
 // On resume, Music Assistant's output (e.g. shairport-sync) reports playing a couple of
 // seconds before Music Assistant does. Stay on the last player this long meanwhile.
 const HANDOFF_MS = 5000;
@@ -152,13 +152,13 @@ class BeatlightCard extends HTMLElement {
   }
 
   // The player to show and control: the first one playing; else the one last seen
-  // playing, if paused or only recently idle; else the most recently paused or stopped.
+  // playing, if it paused or went idle only recently; else the most recently stopped.
   // A player that has only just started doesn't take over from that one straight away.
   _target(hass) {
     const recent = (p) => {
       const st = hass.states[p.entity];
-      return st && (st.state === "paused" ||
-        (st.state === "idle" && Date.now() - new Date(st.last_changed) < RESUME_MIN * 60000));
+      return st && (st.state === "paused" || st.state === "idle") &&
+        Date.now() - new Date(st.last_changed) < RESUME_MIN * 60000;
     };
     const playing = this._players.find((p) => hass.states[p.entity]?.state === "playing");
     if (playing) {

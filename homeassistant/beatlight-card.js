@@ -172,8 +172,9 @@ class BeatlightCard extends HTMLElement {
     return this._players.filter(recent).sort((x, y) => changed(y) - changed(x))[0];
   }
 
-  getCardSize() { return 1; }
-  getGridOptions() { return { columns: 12, rows: 1, min_rows: 1 }; }
+  // The card is 76px tall, more than one 56px section row, so let the section size it.
+  getCardSize() { return 2; }
+  getGridOptions() { return { columns: 12, rows: 'auto' }; }
 
   connectedCallback() {
     relay.cards.add(this);
